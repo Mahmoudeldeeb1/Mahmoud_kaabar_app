@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 
 void main() {
   runApp(const KaabarApp());
@@ -38,7 +39,7 @@ class KaabarApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: lightTheme,
       darkTheme: darkTheme,
-      themeMode: ThemeMode.system, // follows device light/dark mode
+      themeMode: ThemeMode.system,
       home: const SplashScreen(),
     );
   }
@@ -262,13 +263,16 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _email = TextEditingController();
   final TextEditingController _password = TextEditingController();
-  bool _showError = false;
 
-  void _submit() {
-    setState(() {
-      _showError = !_formKey.currentState!.validate();
-    });
-  }
+  bool _showError = false;
+  bool _isLoading = false;
+
+  final Dio _dio = Dio(
+    BaseOptions(baseUrl: 'https://dummyjson.com'),
+  );
+
+  String? _accessToken;
+  String? _refreshToken;
 
   @override
   void dispose() {
@@ -285,6 +289,81 @@ class _LoginScreenState extends State<LoginScreen> {
         width: 1.2,
       ),
     );
+  }
+
+  Future<void> _getCurrentUser() async {
+    if (_accessToken == null) return;
+
+    final response = await _dio.get(
+      '/auth/me',
+      options: Options(
+        headers: {
+          'Authorization': 'Bearer $_accessToken',
+        },
+      ),
+    );
+
+    debugPrint('Current user: ${response.data}');
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) {
+      setState(() {
+        _showError = true;
+      });
+      return;
+    }
+
+    setState(() {
+      _showError = false;
+      _isLoading = true;
+    });
+
+    try {
+      final response = await _dio.post(
+        '/auth/login',
+        data: {
+          // DummyJSON expects username; you can type "emilys" here when testing
+          'username': _email.text.trim(),
+          'password': _password.text.trim(),
+          'expiresInMins': 30,
+        },
+        options: Options(
+          headers: {'Content-Type': 'application/json'},
+        ),
+      );
+
+      final data = response.data as Map<String, dynamic>;
+      _accessToken = data['accessToken'] as String?;
+      _refreshToken = data['refreshToken'] as String?;
+
+      if (_accessToken != null) {
+        await _getCurrentUser();
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Login successful')),
+      );
+
+      // TODO: Navigate to your Kaabar home screen here
+      // Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomePage()));
+    } on DioException catch (e) {
+      setState(() {
+        _showError = true;
+      });
+      final msg = e.response?.data.toString() ?? e.message ?? 'Login failed';
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg)),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
@@ -336,7 +415,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Email',
+                      'Email / Username',
                       style: TextStyle(
                         fontWeight: FontWeight.w500,
                         fontSize: 14,
@@ -347,7 +426,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       controller: _email,
                       keyboardType: TextInputType.emailAddress,
                       decoration: InputDecoration(
-                        hintText: 'Enter your email',
+                        hintText: 'Enter your username (e.g. emilys)',
                         isDense: true,
                         border: _border(error: _showError),
                         enabledBorder: _border(error: _showError),
@@ -357,9 +436,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       validator: (value) {
                         if (value == null || value.isEmpty) {
                           return 'Required';
-                        }
-                        if (!value.contains('@')) {
-                          return 'Invalid email';
                         }
                         return null;
                       },
@@ -397,7 +473,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     if (_showError) ...[
                       const SizedBox(height: 8),
                       const Text(
-                        'Invalid email or password',
+                        'Invalid email/username or password',
                         style: TextStyle(
                           color: Colors.red,
                           fontSize: 12,
@@ -419,7 +495,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: _submit,
+                        onPressed: _isLoading ? null : _submit,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: primary,
                           foregroundColor: Colors.white,
@@ -428,13 +504,22 @@ class _LoginScreenState extends State<LoginScreen> {
                             borderRadius: BorderRadius.circular(8),
                           ),
                         ),
-                        child: const Text(
-                          'Login',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                        child: _isLoading
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text(
+                                'Login',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                       ),
                     ),
                   ],
